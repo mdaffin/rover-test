@@ -14,39 +14,46 @@ mod rover;
 use rover::Rover;
 
 fn main() {
-    let rover1 = Arc::new(Mutex::new(Rover::new().unwrap()));
-    let rover2 = rover1.clone();
-    let rover3 = rover1.clone();
-    let rover4 = rover1.clone();
+    let rover = Arc::new(Mutex::new(Rover::new().unwrap()));
+    {
+        // this does not look or feel every nice, is there a better way to do this?
+        let rover1 = rover.clone();
+        let rover2 = rover.clone();
+        let rover3 = rover.clone();
 
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+        let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
-    let mut router = Router::new();
-    router.put("/api/stop",
-               move |r: &mut Request| stop(r, &rover1.lock().unwrap()),
-               "stop");
-    router.put("/api/speed",
-               move |r: &mut Request| set_speed(r, &rover2.lock().unwrap()),
-               "set_speed");
-    router.get("/api/speed",
-               move |r: &mut Request| set_speed(r, &rover3.lock().unwrap()),
-               "get_speed");
+        let mut router = Router::new();
+        router.put("/api/stop",
+                   move |r: &mut Request| stop(r, &rover1.lock().unwrap()),
+                   "stop");
+        router.put("/api/speed",
+                   move |r: &mut Request| set_speed(r, &rover2.lock().unwrap()),
+                   "set_speed");
+        router.get("/api/speed",
+                   move |r: &mut Request| set_speed(r, &rover3.lock().unwrap()),
+                   "get_speed");
 
-    let mut serv = Iron::new(router).http("0.0.0.0:3000").unwrap();
+        let mut serv = Iron::new(router).http("0.0.0.0:3000").unwrap();
 
-    println!("now listening");
+        println!("now listening");
 
-    chan_select! {
-        signal.recv() -> signal => {
-            println!("received signal: {:?}", signal);
-            serv.close().unwrap();
-        },
+        chan_select! {
+            signal.recv() -> signal => {
+                println!("received signal: {:?}", signal);
+                serv.close().unwrap();
+            },
+        }
     }
 
     println!("exiting");
-    let r = &rover4.lock().unwrap();
+    let r = match Arc::try_unwrap(rover) {
+        Ok(v) => v.into_inner().unwrap(),
+        // Always panics here
+        Err(_) => panic!("refence still alive"),
+    };
     r.stop().unwrap();
-    // r.unexport().unwrap();
+    r.unexport().unwrap();
 
     fn stop(_: &mut Request, rover: &Rover) -> IronResult<Response> {
         rover.stop().unwrap();
